@@ -185,6 +185,7 @@ function totalDespesasMes(m){
 function totalCartaoNome(m,nome){ return valorCartao(m, nome); }
 function totalBoletoMes(m){ return dados[m].despesas.filter(d=>d.tipo==='boleto').reduce((s,r)=>s+num(r.valor),0); }
 function totalFixaMes(m){ return dados[m].despesas.filter(d=>d.tipo==='fixa').reduce((s,r)=>s+num(r.valor),0); }
+function totalDiversasMes(m){ return dados[m].despesas.filter(d=>d.tipo==='diversas').reduce((s,r)=>s+num(r.valor),0); }
 // pagos = despesas marcadas como pago
 function totalPagoMes(m){
   // pago de boletos/fixas + cartoes que usam lancamentos individuais (sem valor manual)
@@ -314,12 +315,13 @@ function render(){
     <div class="card"><div class="label">Ja pago (ano)</div><div class="valor roxo">${fmt(pagoTotal)}</div></div>
     <div class="card"><div class="label">Falta pagar (ano)</div><div class="valor amarelo">${fmt(abertoTotal)}</div></div>
     <div class="card"><div class="label">Saldo projetado</div><div class="valor ${saldo>=0?'verde':'vermelho'}">${fmt(saldo)}</div></div>`;
-  let nubank=0, evolua=0, boletos=0;
-  MESES.forEach(m => { nubank+=totalCartaoNome(m,'Nubank'); evolua+=totalCartaoNome(m,'Evolua'); boletos+=totalBoletoMes(m); });
+  let nubank=0, evolua=0, boletos=0, diversasAno=0;
+  MESES.forEach(m => { nubank+=totalCartaoNome(m,'Nubank'); evolua+=totalCartaoNome(m,'Evolua'); boletos+=totalBoletoMes(m); diversasAno+=totalDiversasMes(m); });
   document.getElementById('painelCartoes').innerHTML = `
     <div class="card"><div class="label">Cartao Nubank (total)</div><div class="valor azul">${fmt(nubank)}</div></div>
     <div class="card"><div class="label">Cartao Evolua (total)</div><div class="valor azul">${fmt(evolua)}</div></div>
     <div class="card"><div class="label">Boletos (total)</div><div class="valor amarelo">${fmt(boletos)}</div></div>
+    <div class="card"><div class="label">Despesas diversas (ano)</div><div class="valor roxo">${fmt(diversasAno)}</div></div>
     <div class="card"><div class="label">Recebido (ano)</div><div class="valor verde">${fmt(recebidoTotal)}</div></div>`;
   atualizarAlertaTopo();
   const abertos = [...document.querySelectorAll('.mes.aberto')].map(e=>e.dataset.mes);
@@ -333,6 +335,7 @@ function miniCardsHtml(m){
     <div class="mini"><div class="label">Cartao Evolua</div><div class="valor azul">${fmt(totalCartaoNome(m,'Evolua'))}</div></div>
     <div class="mini"><div class="label">Boletos</div><div class="valor amarelo">${fmt(totalBoletoMes(m))}</div></div>
     <div class="mini"><div class="label">Despesas fixas</div><div class="valor vermelho">${fmt(totalFixaMes(m))}</div></div>
+    <div class="mini"><div class="label">Despesas diversas</div><div class="valor roxo">${fmt(totalDiversasMes(m))}</div></div>
     <div class="mini"><div class="label">A receber</div><div class="valor verde">${fmt(rec)}</div></div>
     <div class="mini"><div class="label">Recebido</div><div class="valor verde">${fmt(recebido)}</div></div>
     <div class="mini"><div class="label">Pago</div><div class="valor roxo">${fmt(pago)}</div></div>
@@ -348,8 +351,9 @@ function renderMes(m, aberto){
 
   // Blocos simples: boletos e fixas
   const blocosSimples = [
-    { titulo:'Boletos',        tipo:'boleto', classe:'amarelo' },
-    { titulo:'Despesas fixas', tipo:'fixa',   classe:'vermelho' }
+    { titulo:'Boletos',          tipo:'boleto',   classe:'amarelo' },
+    { titulo:'Despesas fixas',   tipo:'fixa',     classe:'vermelho' },
+    { titulo:'Despesas diversas',tipo:'diversas', classe:'roxo' }
   ];
   const blocosHtml = cartaoHtml + blocosSimples.map(b => {
     const itens = despBloco(m, b.tipo, null);
@@ -587,8 +591,8 @@ function edit(id, campo, valor){
 }
 
 function atualizarResumos(){
-  let recTotal=0, despTotal=0, pagoTotal=0, recebidoTotal=0, nubank=0, evolua=0, boletos=0;
-  MESES.forEach(m => { recTotal+=totalReceitasMes(m); despTotal+=totalDespesasMes(m); pagoTotal+=totalPagoMes(m); recebidoTotal+=totalRecebidoMes(m); nubank+=totalCartaoNome(m,'Nubank'); evolua+=totalCartaoNome(m,'Evolua'); boletos+=totalBoletoMes(m); });
+  let recTotal=0, despTotal=0, pagoTotal=0, recebidoTotal=0, nubank=0, evolua=0, boletos=0, diversasAno=0;
+  MESES.forEach(m => { recTotal+=totalReceitasMes(m); despTotal+=totalDespesasMes(m); pagoTotal+=totalPagoMes(m); recebidoTotal+=totalRecebidoMes(m); nubank+=totalCartaoNome(m,'Nubank'); evolua+=totalCartaoNome(m,'Evolua'); boletos+=totalBoletoMes(m); diversasAno+=totalDiversasMes(m); });
   const saldo=recTotal-despTotal; const abertoTotal=despTotal-pagoTotal;
   document.getElementById('painelGeral').innerHTML = `
     <div class="card"><div class="label">Receita ate dezembro</div><div class="valor verde">${fmt(recTotal)}</div></div>
@@ -600,6 +604,7 @@ function atualizarResumos(){
     <div class="card"><div class="label">Cartao Nubank (total)</div><div class="valor azul">${fmt(nubank)}</div></div>
     <div class="card"><div class="label">Cartao Evolua (total)</div><div class="valor azul">${fmt(evolua)}</div></div>
     <div class="card"><div class="label">Boletos (total)</div><div class="valor amarelo">${fmt(boletos)}</div></div>
+    <div class="card"><div class="label">Despesas diversas (ano)</div><div class="valor roxo">${fmt(diversasAno)}</div></div>
     <div class="card"><div class="label">Recebido (ano)</div><div class="valor verde">${fmt(recebidoTotal)}</div></div>`;
   atualizarAlertaTopo();
   MESES.forEach(m=>{
