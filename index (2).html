@@ -44,6 +44,17 @@
   .col-valor input { text-align:right; }
   .chk { width:20px; height:20px; cursor:pointer; accent-color:#159a5f; }
   tr.pago-row { background:#eafaf1; }
+  tr.vencido-row { background:#fbe4e4; }
+  tr.vencido-row input[type=text], tr.vencido-row input[type=number] { color:#c0392b; }
+  tr.vencebreve-row { background:#fdf4dd; }
+  .badge-venc { display:inline-block; font-size:10px; font-weight:700; padding:2px 6px; border-radius:5px; margin-left:6px; vertical-align:middle; }
+  .badge-venc.venc { background:#d64545; color:#fff; }
+  .badge-venc.breve { background:#c88a00; color:#fff; }
+  .alerta-topo { display:flex; gap:12px; flex-wrap:wrap; margin-bottom:14px; }
+  .alerta-chip { padding:10px 16px; border-radius:10px; font-size:13px; font-weight:600; }
+  .alerta-chip.venc { background:#fbe4e4; color:#c0392b; border:1px solid #f0b8b8; }
+  .alerta-chip.breve { background:#fdf4dd; color:#9a6b00; border:1px solid #ecd48a; }
+  .alerta-chip.ok { background:#e0f5eb; color:#1a9c66; border:1px solid #b8e6cf; }
   tr.pago-row input[type=text], tr.pago-row input[type=number] { color:#0f7a49; }
   .del { background:#e5c0c0; color:#a12b2b; border:none; border-radius:6px; width:28px; height:28px; cursor:pointer; font-size:14px; }
   .del:hover { background:#d64545; color:#fff; }
@@ -76,6 +87,7 @@
   <div id="status" class="status sync">Conectando...</div>
   <div class="painel" id="painelGeral"></div>
   <div class="painel-cartoes" id="painelCartoes"></div>
+  <div class="alerta-topo" id="alertaTopo"></div>
   <div class="toolbar">
     <button onclick="expandirTodos(true)">Expandir todos</button>
     <button onclick="expandirTodos(false)">Recolher todos</button>
@@ -172,6 +184,54 @@ function despBloco(m, tipo, cartao){
 function somaBloco(itens){ return itens.reduce((s,r)=>s+num(r.valor),0); }
 function pagoBloco(itens){ return itens.filter(r=>r.pago).reduce((s,r)=>s+num(r.valor),0); }
 
+// --- vencimento ---
+function hojeISO(){ const d=new Date(); d.setHours(0,0,0,0); return d; }
+function statusVenc(item){
+  // retorna '', 'vencido' ou 'breve'
+  if(item.pago) return '';
+  if(!item.vencimento) return '';
+  const hoje = hojeISO();
+  const v = new Date(item.vencimento + 'T00:00:00');
+  const diff = Math.round((v - hoje) / 86400000);
+  if(diff < 0) return 'vencido';
+  if(diff <= 3) return 'breve';
+  return '';
+}
+function classeVenc(item){
+  const st = statusVenc(item);
+  return st==='vencido' ? 'vencido-row' : (st==='breve' ? 'vencebreve-row' : (item.pago?'pago-row':''));
+}
+function badgeVenc(item){
+  const st = statusVenc(item);
+  if(st==='vencido') return '<span class="badge-venc venc">VENCIDO</span>';
+  if(st==='breve') return '<span class="badge-venc breve">VENCE JA</span>';
+  return '';
+}
+// contagem no ano todo (despesas com vencimento)
+function alertaTopoHtml(){
+  const c = contarVencidos();
+  let chips = '';
+  if(c.venc>0) chips += `<div class="alerta-chip venc">${c.venc} boleto(s) VENCIDO(S)</div>`;
+  if(c.breve>0) chips += `<div class="alerta-chip breve">${c.breve} vence(m) em ate 3 dias</div>`;
+  if(c.venc===0 && c.breve===0) chips = `<div class="alerta-chip ok">Nenhum vencimento em atraso</div>`;
+  return chips;
+}
+function atualizarAlertaTopo(){
+  const el = document.getElementById('alertaTopo');
+  if(el) el.innerHTML = alertaTopoHtml();
+}
+function contarVencidos(){
+  let venc=0, breve=0;
+  MESES.forEach(m=>{
+    dados[m].despesas.forEach(d=>{
+      const st = statusVenc(d);
+      if(st==='vencido') venc++;
+      else if(st==='breve') breve++;
+    });
+  });
+  return { venc, breve };
+}
+
 // --- cartao mes: valor manual manda; senao soma dos lancamentos ---
 function cmObj(m, cartao){ return (cartaoMes[m] && cartaoMes[m][cartao]) ? cartaoMes[m][cartao] : null; }
 function valorCartao(m, cartao){
@@ -200,6 +260,7 @@ function render(){
     <div class="card"><div class="label">Cartao Evolua (total)</div><div class="valor azul">${fmt(evolua)}</div></div>
     <div class="card"><div class="label">Boletos (total)</div><div class="valor amarelo">${fmt(boletos)}</div></div>
     <div class="card"><div class="label">Recebido (ano)</div><div class="valor verde">${fmt(recebidoTotal)}</div></div>`;
+  atualizarAlertaTopo();
   const abertos = [...document.querySelectorAll('.mes.aberto')].map(e=>e.dataset.mes);
   document.getElementById('meses').innerHTML = MESES.map(m => renderMes(m, abertos.includes(m))).join('');
 }
@@ -233,19 +294,20 @@ function renderMes(m, aberto){
     const itens = despBloco(m, b.tipo, null);
     const soma = somaBloco(itens), pg = pagoBloco(itens);
     const rows = itens.length ? itens.map(d => `
-      <tr class="${d.pago?'pago-row':''}">
+      <tr class="${classeVenc(d)}">
         <td class="th-pago"><input type="checkbox" class="chk" ${d.pago?'checked':''} onchange="edit('${d.id}','pago',this.checked)"></td>
-        <td><input type="text" value="${(d.descricao||'').replace(/"/g,'&quot;')}" oninput="edit('${d.id}','descricao',this.value)" placeholder="Descricao"></td>
+        <td><input type="text" value="${(d.descricao||'').replace(/"/g,'&quot;')}" oninput="edit('${d.id}','descricao',this.value)" placeholder="Descricao">${badgeVenc(d)}</td>
+        <td style="width:140px"><input type="date" value="${d.vencimento||''}" onchange="edit('${d.id}','vencimento',this.value)"></td>
         <td class="col-valor" style="width:140px"><input type="number" value="${d.valor||''}" oninput="edit('${d.id}','valor',this.value)" placeholder="0,00" step="0.01"></td>
         <td style="width:40px"><button class="del" onclick="remover('${d.id}','${m}')">&times;</button></td>
-      </tr>`).join('') : `<tr><td colspan="4" class="empty">Nenhum lancamento.</td></tr>`;
+      </tr>`).join('') : `<tr><td colspan="5" class="empty">Nenhum lancamento.</td></tr>`;
     return `
       <div class="secao">
         <div class="secao-title">
           <h3 class="${b.classe}">${b.titulo}</h3>
           <div class="btns"><button class="add" onclick="adicionarDespesa('${m}','${b.tipo}','')">+</button></div>
         </div>
-        <table><thead><tr><th class="th-pago">Pago</th><th>Descricao</th><th style="text-align:right">Valor</th><th></th></tr></thead><tbody>${rows}</tbody></table>
+        <table><thead><tr><th class="th-pago">Pago</th><th>Descricao</th><th>Vencimento</th><th style="text-align:right">Valor</th><th></th></tr></thead><tbody>${rows}</tbody></table>
         <div class="footer-mes" style="justify-content:flex-start;gap:20px">
           <span>Subtotal: <b class="${b.classe}">${fmt(soma)}</b></span>
           <span>Pago: <b class="roxo">${fmt(pg)}</b></span>
@@ -352,14 +414,15 @@ function renderCartaoBloco(m, cartao){
       <h3 class="azul" style="font-size:13px">Lancamentos ${cartao} (opcional)</h3>
       <div class="btns"><button class="add" onclick="adicionarDespesa('${m}','cartao','${cartao}')">+</button></div>
     </div>
-    <table><thead><tr><th class="th-pago">Pago</th><th>Descricao</th><th style="text-align:right">Valor</th><th></th></tr></thead><tbody>${
+    <table><thead><tr><th class="th-pago">Pago</th><th>Descricao</th><th>Vencimento</th><th style="text-align:right">Valor</th><th></th></tr></thead><tbody>${
       despBloco(m,'cartao',cartao).length ? despBloco(m,'cartao',cartao).map(d=>`
-        <tr class="${d.pago?'pago-row':''}">
+        <tr class="${classeVenc(d)}">
           <td class="th-pago"><input type="checkbox" class="chk" ${d.pago?'checked':''} onchange="edit('${d.id}','pago',this.checked)"></td>
-          <td><input type="text" value="${(d.descricao||'').replace(/"/g,'&quot;')}" oninput="edit('${d.id}','descricao',this.value)" placeholder="Descricao"></td>
+          <td><input type="text" value="${(d.descricao||'').replace(/"/g,'&quot;')}" oninput="edit('${d.id}','descricao',this.value)" placeholder="Descricao">${badgeVenc(d)}</td>
+          <td style="width:140px"><input type="date" value="${d.vencimento||''}" onchange="edit('${d.id}','vencimento',this.value)"></td>
           <td class="col-valor" style="width:140px"><input type="number" value="${d.valor||''}" oninput="edit('${d.id}','valor',this.value)" placeholder="0,00" step="0.01"></td>
           <td style="width:40px"><button class="del" onclick="remover('${d.id}','${m}')">&times;</button></td>
-        </tr>`).join('') : `<tr><td colspan="4" class="empty">Nenhum lancamento (ou usando total digitado).</td></tr>`
+        </tr>`).join('') : `<tr><td colspan="5" class="empty">Nenhum lancamento (ou usando total digitado).</td></tr>`
     }</tbody></table>
   </div>`;
 }
@@ -423,7 +486,7 @@ async function adicionar(mes, categoria){
 
 async function adicionarDespesa(mes, tipo, cartao){
   setStatus('Salvando...', 'sync');
-  const novo = { mes, categoria:'despesa', descricao:'', valor:0, tipo, cartao: cartao || null, pago:false, ordem: Date.now() };
+  const novo = { mes, categoria:'despesa', descricao:'', valor:0, tipo, cartao: cartao || null, pago:false, vencimento:null, ordem: Date.now() };
   const { data, error } = await sb.from(TABELA).insert(novo).select().single();
   if(error){ setStatus('Erro: '+error.message,'erro'); return; }
   dados[mes].despesas.push(data);
@@ -448,7 +511,7 @@ function edit(id, campo, valor){
     }
   }
   // pago, tipo e cartao mudam painel e cores -> re-render; valor so atualiza numeros
-  if(campo==='pago' || campo==='tipo' || campo==='cartao'){ render(); if(mesAlvo) reabrir(mesAlvo); }
+  if(campo==='pago' || campo==='tipo' || campo==='cartao' || campo==='vencimento'){ render(); if(mesAlvo) reabrir(mesAlvo); }
   else if(campo==='valor'){ atualizarResumos(); }
 
   clearTimeout(timers[id+campo]);
@@ -476,6 +539,7 @@ function atualizarResumos(){
     <div class="card"><div class="label">Cartao Evolua (total)</div><div class="valor azul">${fmt(evolua)}</div></div>
     <div class="card"><div class="label">Boletos (total)</div><div class="valor amarelo">${fmt(boletos)}</div></div>
     <div class="card"><div class="label">Recebido (ano)</div><div class="valor verde">${fmt(recebidoTotal)}</div></div>`;
+  atualizarAlertaTopo();
   MESES.forEach(m=>{
     const el=document.querySelector(`.mes[data-mes="${m}"] .mes-resumo`);
     if(el){ const rec=totalReceitasMes(m), desp=totalDespesasMes(m), s=rec-desp, pg=totalPagoMes(m);
