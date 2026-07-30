@@ -114,6 +114,9 @@ MESES.forEach(m => dados[m] = { receitas:[], despesas:[] });
 let cartaoMes = {};   // cartaoMes[mes][cartao] = {id, valor_manual, pago}
 let historico = {};   // historico[mes+'|'+cartao] = [ {valor, pago_em} ]
 let timers = {};
+let digitando = false;      // true enquanto um input esta focado
+let refreshPendente = false; // guarda que chegou update enquanto digitava
+let canalRealtime = null;
 
 function setStatus(txt, cls){ const el = document.getElementById('status'); el.textContent = txt; el.className = 'status ' + cls; }
 function fmt(v){ return (Number(v)||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'}); }
@@ -140,6 +143,35 @@ async function carregar(){
   setStatus('Sincronizado', 'ok'); render();
 }
 async function recarregar(){ await carregar(); }
+
+// --- controle de foco: nao atualizar a tela enquanto o usuario digita ---
+document.addEventListener('focusin', (e)=>{
+  if(e.target && (e.target.tagName==='INPUT' || e.target.tagName==='SELECT')) digitando = true;
+});
+document.addEventListener('focusout', (e)=>{
+  if(e.target && (e.target.tagName==='INPUT' || e.target.tagName==='SELECT')){
+    digitando = false;
+    // se chegou atualizacao de outra pessoa enquanto eu digitava, aplica agora
+    if(refreshPendente){ refreshPendente = false; recarregarSuave(); }
+  }
+});
+
+// recarrega os dados sem baguncar quem esta digitando
+async function recarregarSuave(){
+  if(digitando){ refreshPendente = true; return; }
+  await carregar();
+}
+
+// --- Realtime: assina mudancas nas 3 tabelas ---
+function assinarRealtime(){
+  try{
+    canalRealtime = sb.channel('org-financeiro')
+      .on('postgres_changes', { event:'*', schema:'public', table:TABELA }, ()=> recarregarSuave())
+      .on('postgres_changes', { event:'*', schema:'public', table:TABELA_CM }, ()=> recarregarSuave())
+      .on('postgres_changes', { event:'*', schema:'public', table:TABELA_CH }, ()=> recarregarSuave())
+      .subscribe();
+  }catch(e){ /* se realtime nao estiver ligado, segue sem tempo real */ }
+}
 
 function totalReceitasMes(m){ return dados[m].receitas.reduce((s,r)=>s+num(r.valor),0); }
 function totalDespesasMes(m){
@@ -558,6 +590,7 @@ if(SUPABASE_URL.startsWith('COLE_') || SUPABASE_KEY.startsWith('COLE_')){
   try {
     sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
     carregar();
+    assinarRealtime();
   } catch (e) {
     setStatus('Erro ao conectar: ' + e.message, 'erro');
     render();
