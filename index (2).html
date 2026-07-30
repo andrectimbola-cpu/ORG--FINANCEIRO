@@ -204,6 +204,19 @@ function render(){
   document.getElementById('meses').innerHTML = MESES.map(m => renderMes(m, abertos.includes(m))).join('');
 }
 
+function miniCardsHtml(m){
+  const rec = totalReceitasMes(m), pago = totalPagoMes(m), abertoVal = totalAbertoMes(m), recebido = totalRecebidoMes(m);
+  return `
+    <div class="mini"><div class="label">Cartao Nubank</div><div class="valor azul">${fmt(totalCartaoNome(m,'Nubank'))}</div></div>
+    <div class="mini"><div class="label">Cartao Evolua</div><div class="valor azul">${fmt(totalCartaoNome(m,'Evolua'))}</div></div>
+    <div class="mini"><div class="label">Boletos</div><div class="valor amarelo">${fmt(totalBoletoMes(m))}</div></div>
+    <div class="mini"><div class="label">Despesas fixas</div><div class="valor vermelho">${fmt(totalFixaMes(m))}</div></div>
+    <div class="mini"><div class="label">A receber</div><div class="valor verde">${fmt(rec)}</div></div>
+    <div class="mini"><div class="label">Recebido</div><div class="valor verde">${fmt(recebido)}</div></div>
+    <div class="mini"><div class="label">Pago</div><div class="valor roxo">${fmt(pago)}</div></div>
+    <div class="mini"><div class="label">Falta pagar</div><div class="valor amarelo">${fmt(abertoVal)}</div></div>`;
+}
+
 function renderMes(m, aberto){
   const rec = totalReceitasMes(m), desp = totalDespesasMes(m), saldo = rec - desp;
   const pago = totalPagoMes(m), abertoVal = totalAbertoMes(m), recebido = totalRecebidoMes(m);
@@ -262,16 +275,7 @@ function renderMes(m, aberto){
       </div>
     </div>
     <div class="mes-body">
-      <div class="mes-mini">
-        <div class="mini"><div class="label">Cartao Nubank</div><div class="valor azul">${fmt(totalCartaoNome(m,'Nubank'))}</div></div>
-        <div class="mini"><div class="label">Cartao Evolua</div><div class="valor azul">${fmt(totalCartaoNome(m,'Evolua'))}</div></div>
-        <div class="mini"><div class="label">Boletos</div><div class="valor amarelo">${fmt(totalBoletoMes(m))}</div></div>
-        <div class="mini"><div class="label">Despesas fixas</div><div class="valor vermelho">${fmt(totalFixaMes(m))}</div></div>
-        <div class="mini"><div class="label">A receber</div><div class="valor verde">${fmt(rec)}</div></div>
-        <div class="mini"><div class="label">Recebido</div><div class="valor verde">${fmt(recebido)}</div></div>
-        <div class="mini"><div class="label">Pago</div><div class="valor roxo">${fmt(pago)}</div></div>
-        <div class="mini"><div class="label">Falta pagar</div><div class="valor amarelo">${fmt(abertoVal)}</div></div>
-      </div>
+      <div class="mes-mini" id="mini-${m}">${miniCardsHtml(m)}</div>
 
       ${blocosHtml}
 
@@ -289,6 +293,25 @@ function renderMes(m, aberto){
       </div>
     </div>
   </div>`;
+}
+
+function dicaCartaoTexto(m, cartao){
+  const o = cmObj(m, cartao);
+  const temManual = o && o.valor_manual!==null && o.valor_manual!==undefined && o.valor_manual!=='';
+  const somaLanc = somaBloco(despBloco(m,'cartao',cartao));
+  const valorEfetivo = valorCartao(m, cartao);
+  const msg = temManual ? 'Usando o valor digitado (ignora os lancamentos abaixo).'
+            : (somaLanc>0 ? 'Somando os lancamentos abaixo. Digite um total para substituir.'
+            : 'Digite o total do cartao ou adicione lancamentos no +.');
+  return `${msg} Valor atual: <b>${fmt(valorEfetivo)}</b>`;
+}
+function atualizarMiniMes(m){
+  const el = document.getElementById('mini-'+m);
+  if(el) el.innerHTML = miniCardsHtml(m);
+}
+function atualizarDicaCartao(m, cartao){
+  const el = document.getElementById('hint-'+m+'-'+cartao);
+  if(el) el.innerHTML = dicaCartaoTexto(m, cartao);
 }
 
 function renderCartaoBloco(m, cartao){
@@ -319,7 +342,7 @@ function renderCartaoBloco(m, cartao){
         <button class="btn-pago ${pago?'on':''}" onclick="toggleCartaoPago('${m}','${cartao}')">${pago?'Pago ✓':'Marcar pago'}</button>
         <button class="btn-hist" onclick="toggleHist('${m}','${cartao}')">Historico (${hist.length})</button>
       </div>
-      <div class="hint">${temManual ? 'Usando o valor digitado (ignora os lancamentos abaixo).' : (somaLanc>0 ? 'Somando os lancamentos abaixo. Digite um total para substituir.' : 'Digite o total do cartao ou adicione lancamentos no +.')} Valor atual: <b>${fmt(valorEfetivo)}</b></div>
+      <div class="hint" id="hint-${m}-${cartao}">${dicaCartaoTexto(m, cartao)}</div>
       <div class="hist-lista" id="hist-${m}-${cartao}">
         <div style="font-size:12px;color:#6b7482;text-transform:uppercase;margin-bottom:6px">Historico de pagamentos</div>
         ${histRows}
@@ -348,6 +371,8 @@ async function setCartaoValor(m, cartao, valor){
   atual.valor_manual = (valor===''? null : num(valor));
   cartaoMes[m][cartao] = atual;
   atualizarResumos();
+  atualizarMiniMes(m);
+  atualizarDicaCartao(m, cartao);
   clearTimeout(timers['cv'+m+cartao]);
   setStatus('Salvando...', 'sync');
   timers['cv'+m+cartao] = setTimeout(async ()=>{
