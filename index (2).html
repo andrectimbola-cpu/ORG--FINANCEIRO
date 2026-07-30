@@ -53,6 +53,21 @@
   .toolbar button { background:#ffffff; border:1px solid #d4dae2; color:#1e2430; padding:9px 14px; border-radius:8px; cursor:pointer; font-size:13px; }
   .toolbar button:hover { border-color:#2f6fd6; }
   .th-pago { width:44px; text-align:center; }
+  .cartao-box { background:#f7f9fb; border:1px solid #eef1f5; border-radius:12px; padding:14px 16px; margin-bottom:14px; }
+  .cartao-top { display:flex; align-items:center; gap:14px; flex-wrap:wrap; }
+  .cartao-top h3 { font-size:15px; margin-right:auto; }
+  .cartao-top .campo-valor { display:flex; align-items:center; gap:6px; }
+  .cartao-top .campo-valor label { font-size:11px; color:#6b7482; text-transform:uppercase; }
+  .cartao-top input.valor-manual { width:130px; text-align:right; font-weight:700; font-size:15px; }
+  .btn-pago { border:1px solid #159a5f; background:#fff; color:#159a5f; border-radius:8px; padding:7px 14px; font-size:13px; cursor:pointer; font-weight:600; }
+  .btn-pago.on { background:#159a5f; color:#fff; }
+  .btn-hist { border:1px solid #d4dae2; background:#fff; color:#6b7482; border-radius:8px; padding:7px 12px; font-size:13px; cursor:pointer; }
+  .btn-hist:hover { border-color:#2f6fd6; color:#2f6fd6; }
+  .hist-lista { margin-top:12px; border-top:1px dashed #d4dae2; padding-top:10px; display:none; }
+  .hist-lista.aberto { display:block; }
+  .hist-item { display:flex; justify-content:space-between; font-size:13px; padding:5px 2px; border-bottom:1px solid #eef1f5; }
+  .hist-item .data { color:#6b7482; }
+  .hint { font-size:11px; color:#9aa3b0; margin-top:6px; }
 </style>
 </head>
 <body>
@@ -78,10 +93,14 @@ const SUPABASE_KEY  = 'sb_publishable_WY2pypkIGU6xBOm21AXMbA_TdCtzxkZ';
 const MESES = ['agosto','setembro','outubro','novembro','dezembro'];
 const CARTOES = ['Nubank','Evolua'];
 const TABELA = 'organizador_lancamentos';
+const TABELA_CM = 'cartao_mes';
+const TABELA_CH = 'cartao_historico';
 let sb = null;
 
 let dados = {};
 MESES.forEach(m => dados[m] = { receitas:[], despesas:[] });
+let cartaoMes = {};   // cartaoMes[mes][cartao] = {id, valor_manual, pago}
+let historico = {};   // historico[mes+'|'+cartao] = [ {valor, pago_em} ]
 let timers = {};
 
 function setStatus(txt, cls){ const el = document.getElementById('status'); el.textContent = txt; el.className = 'status ' + cls; }
@@ -90,24 +109,78 @@ function num(v){ return parseFloat(v)||0; }
 
 async function carregar(){
   setStatus('Carregando...', 'sync');
-  const { data, error } = await sb.from(TABELA).select('*').order('ordem',{ascending:true});
-  if(error){ setStatus('Erro ao carregar: '+error.message, 'erro'); return; }
+  const r1 = await sb.from(TABELA).select('*').order('ordem',{ascending:true});
+  if(r1.error){ setStatus('Erro ao carregar: '+r1.error.message, 'erro'); return; }
   MESES.forEach(m => dados[m] = { receitas:[], despesas:[] });
-  data.forEach(row => { if(!dados[row.mes]) return; if(row.categoria === 'receita') dados[row.mes].receitas.push(row); else dados[row.mes].despesas.push(row); });
+  r1.data.forEach(row => { if(!dados[row.mes]) return; if(row.categoria === 'receita') dados[row.mes].receitas.push(row); else dados[row.mes].despesas.push(row); });
+
+  // cartao_mes
+  cartaoMes = {};
+  MESES.forEach(m => { cartaoMes[m] = {}; });
+  const r2 = await sb.from(TABELA_CM).select('*');
+  if(!r2.error && r2.data){ r2.data.forEach(row => { if(cartaoMes[row.mes]) cartaoMes[row.mes][row.cartao] = row; }); }
+
+  // historico
+  historico = {};
+  const r3 = await sb.from(TABELA_CH).select('*').order('pago_em',{ascending:false});
+  if(!r3.error && r3.data){ r3.data.forEach(row => { const k = row.mes+'|'+row.cartao; (historico[k] = historico[k] || []).push(row); }); }
+
   setStatus('Sincronizado', 'ok'); render();
 }
 async function recarregar(){ await carregar(); }
 
 function totalReceitasMes(m){ return dados[m].receitas.reduce((s,r)=>s+num(r.valor),0); }
-function totalDespesasMes(m){ return dados[m].despesas.reduce((s,r)=>s+num(r.valor),0); }
-function totalCartaoNome(m,nome){ return dados[m].despesas.filter(d=>d.tipo==='cartao'&&d.cartao===nome).reduce((s,r)=>s+num(r.valor),0); }
+function totalDespesasMes(m){
+  let total = 0;
+  // boletos + fixas (sempre por lancamento)
+  dados[m].despesas.forEach(d=>{ if(d.tipo!=='cartao') total += num(d.valor); });
+  // cartoes: usa valorCartao (manual manda, senao soma lancamentos)
+  CARTOES.forEach(c=> total += valorCartao(m,c));
+  return total;
+}
+function totalCartaoNome(m,nome){ return valorCartao(m, nome); }
 function totalBoletoMes(m){ return dados[m].despesas.filter(d=>d.tipo==='boleto').reduce((s,r)=>s+num(r.valor),0); }
 function totalFixaMes(m){ return dados[m].despesas.filter(d=>d.tipo==='fixa').reduce((s,r)=>s+num(r.valor),0); }
 // pagos = despesas marcadas como pago
-function totalPagoMes(m){ return dados[m].despesas.filter(d=>d.pago).reduce((s,r)=>s+num(r.valor),0); }
-function totalAbertoMes(m){ return dados[m].despesas.filter(d=>!d.pago).reduce((s,r)=>s+num(r.valor),0); }
+function totalPagoMes(m){
+  // pago de boletos/fixas + cartoes que usam lancamentos individuais (sem valor manual)
+  let pago = 0;
+  dados[m].despesas.filter(d=>d.pago).forEach(d=>{
+    if(d.tipo==='cartao'){
+      // so conta se esse cartao NAO tem valor manual (senao seria dobrado)
+      const o = cmObj(m, d.cartao);
+      const temManual = o && o.valor_manual!==null && o.valor_manual!==undefined && o.valor_manual!=='';
+      if(!temManual) pago += num(d.valor);
+    } else {
+      pago += num(d.valor);
+    }
+  });
+  // cartoes marcados como pagos no proprio card
+  CARTOES.forEach(c=>{ if(cartaoPago(m,c)) pago += valorCartao(m,c); });
+  return pago;
+}
+function totalAbertoMes(m){ return totalDespesasMes(m) - totalPagoMes(m); }
 // recebidos = receitas marcadas como pago (recebido)
 function totalRecebidoMes(m){ return dados[m].receitas.filter(r=>r.pago).reduce((s,r)=>s+num(r.valor),0); }
+// filtros por bloco de despesa
+function despBloco(m, tipo, cartao){
+  return dados[m].despesas.filter(d => {
+    if(tipo==='cartao') return d.tipo==='cartao' && d.cartao===cartao;
+    return d.tipo===tipo;
+  });
+}
+function somaBloco(itens){ return itens.reduce((s,r)=>s+num(r.valor),0); }
+function pagoBloco(itens){ return itens.filter(r=>r.pago).reduce((s,r)=>s+num(r.valor),0); }
+
+// --- cartao mes: valor manual manda; senao soma dos lancamentos ---
+function cmObj(m, cartao){ return (cartaoMes[m] && cartaoMes[m][cartao]) ? cartaoMes[m][cartao] : null; }
+function valorCartao(m, cartao){
+  const o = cmObj(m, cartao);
+  if(o && o.valor_manual !== null && o.valor_manual !== undefined && o.valor_manual !== '') return num(o.valor_manual);
+  return somaBloco(despBloco(m, 'cartao', cartao));
+}
+function cartaoPago(m, cartao){ const o = cmObj(m, cartao); return !!(o && o.pago); }
+function valorCartaoPago(m, cartao){ return cartaoPago(m, cartao) ? valorCartao(m, cartao) : 0; }
 
 function render(){
   let recTotal=0, despTotal=0, pagoTotal=0, recebidoTotal=0;
@@ -133,7 +206,42 @@ function render(){
 
 function renderMes(m, aberto){
   const rec = totalReceitasMes(m), desp = totalDespesasMes(m), saldo = rec - desp;
-  const pago = totalPagoMes(m), aberto2 = totalAbertoMes(m), recebido = totalRecebidoMes(m);
+  const pago = totalPagoMes(m), abertoVal = totalAbertoMes(m), recebido = totalRecebidoMes(m);
+
+  // Blocos de cartao (editaveis, com pago e historico)
+  const cartaoHtml = CARTOES.map(c => renderCartaoBloco(m, c)).join('');
+
+  // Blocos simples: boletos e fixas
+  const blocosSimples = [
+    { titulo:'Boletos',        tipo:'boleto', classe:'amarelo' },
+    { titulo:'Despesas fixas', tipo:'fixa',   classe:'vermelho' }
+  ];
+  const blocosHtml = cartaoHtml + blocosSimples.map(b => {
+    const itens = despBloco(m, b.tipo, null);
+    const soma = somaBloco(itens), pg = pagoBloco(itens);
+    const rows = itens.length ? itens.map(d => `
+      <tr class="${d.pago?'pago-row':''}">
+        <td class="th-pago"><input type="checkbox" class="chk" ${d.pago?'checked':''} onchange="edit('${d.id}','pago',this.checked)"></td>
+        <td><input type="text" value="${(d.descricao||'').replace(/"/g,'&quot;')}" oninput="edit('${d.id}','descricao',this.value)" placeholder="Descricao"></td>
+        <td class="col-valor" style="width:140px"><input type="number" value="${d.valor||''}" oninput="edit('${d.id}','valor',this.value)" placeholder="0,00" step="0.01"></td>
+        <td style="width:40px"><button class="del" onclick="remover('${d.id}','${m}')">&times;</button></td>
+      </tr>`).join('') : `<tr><td colspan="4" class="empty">Nenhum lancamento.</td></tr>`;
+    return `
+      <div class="secao">
+        <div class="secao-title">
+          <h3 class="${b.classe}">${b.titulo}</h3>
+          <div class="btns"><button class="add" onclick="adicionarDespesa('${m}','${b.tipo}','')">+</button></div>
+        </div>
+        <table><thead><tr><th class="th-pago">Pago</th><th>Descricao</th><th style="text-align:right">Valor</th><th></th></tr></thead><tbody>${rows}</tbody></table>
+        <div class="footer-mes" style="justify-content:flex-start;gap:20px">
+          <span>Subtotal: <b class="${b.classe}">${fmt(soma)}</b></span>
+          <span>Pago: <b class="roxo">${fmt(pg)}</b></span>
+          <span>Falta: <b class="amarelo">${fmt(soma-pg)}</b></span>
+        </div>
+      </div>`;
+  }).join('');
+
+  // Bloco de receitas
   const receitasRows = dados[m].receitas.length ? dados[m].receitas.map(r=>`
     <tr class="${r.pago?'pago-row':''}">
       <td class="th-pago"><input type="checkbox" class="chk" ${r.pago?'checked':''} onchange="edit('${r.id}','pago',this.checked)"></td>
@@ -141,25 +249,7 @@ function renderMes(m, aberto){
       <td class="col-valor" style="width:140px"><input type="number" value="${r.valor||''}" oninput="edit('${r.id}','valor',this.value)" placeholder="0,00" step="0.01"></td>
       <td style="width:40px"><button class="del" onclick="remover('${r.id}','${m}')">&times;</button></td>
     </tr>`).join('') : `<tr><td colspan="4" class="empty">Nenhuma receita.</td></tr>`;
-  const despesasRows = dados[m].despesas.length ? dados[m].despesas.map(d=>`
-    <tr class="${d.pago?'pago-row':''}">
-      <td class="th-pago"><input type="checkbox" class="chk" ${d.pago?'checked':''} onchange="edit('${d.id}','pago',this.checked)"></td>
-      <td><input type="text" value="${(d.descricao||'').replace(/"/g,'&quot;')}" oninput="edit('${d.id}','descricao',this.value)" placeholder="Descricao"></td>
-      <td style="width:120px">
-        <select onchange="edit('${d.id}','tipo',this.value)">
-          <option value="cartao" ${d.tipo==='cartao'?'selected':''}>Cartao</option>
-          <option value="boleto" ${d.tipo==='boleto'?'selected':''}>Boleto</option>
-          <option value="fixa" ${d.tipo==='fixa'?'selected':''}>Fixa</option>
-        </select>
-      </td>
-      <td style="width:110px">
-        ${d.tipo==='cartao' ? `<select onchange="edit('${d.id}','cartao',this.value)">
-          ${CARTOES.map(c=>`<option ${d.cartao===c?'selected':''}>${c}</option>`).join('')}
-        </select>` : '&mdash;'}
-      </td>
-      <td class="col-valor" style="width:140px"><input type="number" value="${d.valor||''}" oninput="edit('${d.id}','valor',this.value)" placeholder="0,00" step="0.01"></td>
-      <td style="width:40px"><button class="del" onclick="remover('${d.id}','${m}')">&times;</button></td>
-    </tr>`).join('') : `<tr><td colspan="6" class="empty">Nenhuma despesa.</td></tr>`;
+
   return `
   <div class="mes ${aberto?'aberto':''}" data-mes="${m}">
     <div class="mes-header" onclick="toggleMes('${m}')">
@@ -180,25 +270,121 @@ function renderMes(m, aberto){
         <div class="mini"><div class="label">A receber</div><div class="valor verde">${fmt(rec)}</div></div>
         <div class="mini"><div class="label">Recebido</div><div class="valor verde">${fmt(recebido)}</div></div>
         <div class="mini"><div class="label">Pago</div><div class="valor roxo">${fmt(pago)}</div></div>
-        <div class="mini"><div class="label">Falta pagar</div><div class="valor amarelo">${fmt(aberto2)}</div></div>
+        <div class="mini"><div class="label">Falta pagar</div><div class="valor amarelo">${fmt(abertoVal)}</div></div>
       </div>
+
+      ${blocosHtml}
+
       <div class="secao">
-        <div class="secao-title"><h3>Receitas</h3><div class="btns"><button class="add" onclick="adicionar('${m}','receita')">+</button></div></div>
+        <div class="secao-title"><h3 class="verde">Receitas</h3><div class="btns"><button class="add" onclick="adicionar('${m}','receita')">+</button></div></div>
         <table><thead><tr><th class="th-pago">Rec.</th><th>Descricao</th><th style="text-align:right">Valor</th><th></th></tr></thead><tbody>${receitasRows}</tbody></table>
       </div>
-      <div class="secao">
-        <div class="secao-title"><h3>Despesas</h3><div class="btns"><button class="add" onclick="adicionar('${m}','despesa')">+</button></div></div>
-        <table><thead><tr><th class="th-pago">Pago</th><th>Descricao</th><th>Tipo</th><th>Cartao</th><th style="text-align:right">Valor</th><th></th></tr></thead><tbody>${despesasRows}</tbody></table>
-      </div>
+
       <div class="footer-mes">
         <span>Total receitas: <b class="verde">${fmt(rec)}</b></span>
         <span>Total despesas: <b class="vermelho">${fmt(desp)}</b></span>
         <span>Pago: <b class="roxo">${fmt(pago)}</b></span>
-        <span>Falta pagar: <b class="amarelo">${fmt(aberto2)}</b></span>
+        <span>Falta pagar: <b class="amarelo">${fmt(abertoVal)}</b></span>
         <span>Saldo: <b class="${saldo>=0?'verde':'vermelho'}">${fmt(saldo)}</b></span>
       </div>
     </div>
   </div>`;
+}
+
+function renderCartaoBloco(m, cartao){
+  const o = cmObj(m, cartao);
+  const temManual = o && o.valor_manual!==null && o.valor_manual!==undefined && o.valor_manual!=='';
+  const valorEfetivo = valorCartao(m, cartao);
+  const somaLanc = somaBloco(despBloco(m,'cartao',cartao));
+  const pago = cartaoPago(m, cartao);
+  const key = m+'|'+cartao;
+  const hist = historico[key] || [];
+
+  const histRows = hist.length ? hist.map(h=>`
+    <div class="hist-item"><span>${fmt(h.valor)}</span><span class="data">${new Date(h.pago_em).toLocaleDateString('pt-BR')} ${new Date(h.pago_em).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}</span></div>
+  `).join('') : `<div class="empty">Nenhum pagamento registrado ainda.</div>`;
+
+  const valInput = temManual ? o.valor_manual : '';
+
+  return `
+  <div class="secao">
+    <div class="cartao-box ${pago?'':''}" style="${pago?'background:#eafaf1;border-color:#bfe8d0;':''}">
+      <div class="cartao-top">
+        <h3 class="azul">${cartao}</h3>
+        <div class="campo-valor">
+          <label>Total do mes</label>
+          <input type="number" class="valor-manual" step="0.01" placeholder="${fmt(somaLanc).replace('R$','').trim()}" value="${valInput}"
+                 oninput="setCartaoValor('${m}','${cartao}',this.value)">
+        </div>
+        <button class="btn-pago ${pago?'on':''}" onclick="toggleCartaoPago('${m}','${cartao}')">${pago?'Pago ✓':'Marcar pago'}</button>
+        <button class="btn-hist" onclick="toggleHist('${m}','${cartao}')">Historico (${hist.length})</button>
+      </div>
+      <div class="hint">${temManual ? 'Usando o valor digitado (ignora os lancamentos abaixo).' : (somaLanc>0 ? 'Somando os lancamentos abaixo. Digite um total para substituir.' : 'Digite o total do cartao ou adicione lancamentos no +.')} Valor atual: <b>${fmt(valorEfetivo)}</b></div>
+      <div class="hist-lista" id="hist-${m}-${cartao}">
+        <div style="font-size:12px;color:#6b7482;text-transform:uppercase;margin-bottom:6px">Historico de pagamentos</div>
+        ${histRows}
+      </div>
+    </div>
+    <div class="secao-title" style="margin-top:4px">
+      <h3 class="azul" style="font-size:13px">Lancamentos ${cartao} (opcional)</h3>
+      <div class="btns"><button class="add" onclick="adicionarDespesa('${m}','cartao','${cartao}')">+</button></div>
+    </div>
+    <table><thead><tr><th class="th-pago">Pago</th><th>Descricao</th><th style="text-align:right">Valor</th><th></th></tr></thead><tbody>${
+      despBloco(m,'cartao',cartao).length ? despBloco(m,'cartao',cartao).map(d=>`
+        <tr class="${d.pago?'pago-row':''}">
+          <td class="th-pago"><input type="checkbox" class="chk" ${d.pago?'checked':''} onchange="edit('${d.id}','pago',this.checked)"></td>
+          <td><input type="text" value="${(d.descricao||'').replace(/"/g,'&quot;')}" oninput="edit('${d.id}','descricao',this.value)" placeholder="Descricao"></td>
+          <td class="col-valor" style="width:140px"><input type="number" value="${d.valor||''}" oninput="edit('${d.id}','valor',this.value)" placeholder="0,00" step="0.01"></td>
+          <td style="width:40px"><button class="del" onclick="remover('${d.id}','${m}')">&times;</button></td>
+        </tr>`).join('') : `<tr><td colspan="4" class="empty">Nenhum lancamento (ou usando total digitado).</td></tr>`
+    }</tbody></table>
+  </div>`;
+}
+
+// upsert do valor manual do cartao (debounce)
+async function setCartaoValor(m, cartao, valor){
+  if(!cartaoMes[m]) cartaoMes[m] = {};
+  const atual = cartaoMes[m][cartao] || { mes:m, cartao };
+  atual.valor_manual = (valor===''? null : num(valor));
+  cartaoMes[m][cartao] = atual;
+  atualizarResumos();
+  clearTimeout(timers['cv'+m+cartao]);
+  setStatus('Salvando...', 'sync');
+  timers['cv'+m+cartao] = setTimeout(async ()=>{
+    const payload = { mes:m, cartao, valor_manual: atual.valor_manual, pago: !!atual.pago };
+    const { data, error } = await sb.from(TABELA_CM).upsert(payload, { onConflict:'mes,cartao' }).select().single();
+    if(!error && data){ cartaoMes[m][cartao] = data; }
+    setStatus(error? 'Erro: '+error.message : 'Sincronizado', error?'erro':'ok');
+  }, 500);
+}
+
+// marcar/desmarcar cartao como pago; ao marcar, grava no historico
+async function toggleCartaoPago(m, cartao){
+  if(!cartaoMes[m]) cartaoMes[m] = {};
+  const atual = cartaoMes[m][cartao] || { mes:m, cartao, valor_manual:null };
+  const novoPago = !atual.pago;
+  atual.pago = novoPago;
+  cartaoMes[m][cartao] = atual;
+  setStatus('Salvando...', 'sync');
+  // salva estado do cartao
+  const payload = { mes:m, cartao, valor_manual: (atual.valor_manual??null), pago: novoPago };
+  const { data, error } = await sb.from(TABELA_CM).upsert(payload, { onConflict:'mes,cartao' }).select().single();
+  if(error){ setStatus('Erro: '+error.message,'erro'); return; }
+  cartaoMes[m][cartao] = data;
+  // se marcou como pago, registra no historico
+  if(novoPago){
+    const v = valorCartao(m, cartao);
+    const h = { mes:m, cartao, valor:v };
+    const r = await sb.from(TABELA_CH).insert(h).select().single();
+    if(!r.error && r.data){ const k=m+'|'+cartao; (historico[k]=historico[k]||[]); historico[k].unshift(r.data); }
+  }
+  setStatus('Sincronizado','ok');
+  render(); reabrir(m);
+}
+
+function toggleHist(m, cartao){
+  const el = document.getElementById('hist-'+m+'-'+cartao);
+  if(el) el.classList.toggle('aberto');
 }
 
 async function adicionar(mes, categoria){
@@ -207,6 +393,15 @@ async function adicionar(mes, categoria){
   const { data, error } = await sb.from(TABELA).insert(novo).select().single();
   if(error){ setStatus('Erro: '+error.message,'erro'); return; }
   (categoria==='receita' ? dados[mes].receitas : dados[mes].despesas).push(data);
+  setStatus('Sincronizado','ok'); render(); reabrir(mes);
+}
+
+async function adicionarDespesa(mes, tipo, cartao){
+  setStatus('Salvando...', 'sync');
+  const novo = { mes, categoria:'despesa', descricao:'', valor:0, tipo, cartao: cartao || null, pago:false, ordem: Date.now() };
+  const { data, error } = await sb.from(TABELA).insert(novo).select().single();
+  if(error){ setStatus('Erro: '+error.message,'erro'); return; }
+  dados[mes].despesas.push(data);
   setStatus('Sincronizado','ok'); render(); reabrir(mes);
 }
 
