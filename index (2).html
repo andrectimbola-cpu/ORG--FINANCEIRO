@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Organizador Financeiro</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { font-family: -apple-system, 'Segoe UI', Roboto, sans-serif; background:#f2f4f7; color:#1e2430; padding:20px; line-height:1.4; }
+  h1 { font-size:22px; margin-bottom:4px; color:#141924; }
+  .sub { color:#6b7482; font-size:13px; margin-bottom:20px; }
+  .status { font-size:12px; margin-bottom:16px; padding:8px 12px; border-radius:8px; display:inline-block; }
+  .status.ok { background:#e0f5eb; color:#1a9c66; }
+  .status.erro { background:#fbe4e4; color:#d64545; }
+  .status.sync { background:#e3edfb; color:#3b7ddd; }
+  .painel { display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:14px; margin-bottom:14px; }
+  .card { background:#ffffff; border:1px solid #e2e6ec; border-radius:12px; padding:16px; box-shadow:0 1px 3px rgba(30,40,60,.05); }
+  .card .label { font-size:12px; color:#6b7482; text-transform:uppercase; letter-spacing:.5px; }
+  .card .valor { font-size:24px; font-weight:700; margin-top:6px; }
+  .verde { color:#159a5f; } .vermelho { color:#d64545; } .amarelo { color:#c88a00; } .azul { color:#2f6fd6; } .roxo { color:#8a4fd6; }
+  .painel-cartoes { display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:14px; margin-bottom:28px; }
+  .mes { background:#ffffff; border:1px solid #e2e6ec; border-radius:14px; margin-bottom:20px; overflow:hidden; box-shadow:0 1px 3px rgba(30,40,60,.05); }
+  .mes-header { padding:16px 20px; background:#f7f9fb; cursor:pointer; display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #eef1f5; }
+  .mes-header h2 { font-size:18px; text-transform:capitalize; color:#141924; }
+  .mes-resumo { display:flex; gap:18px; font-size:13px; flex-wrap:wrap; color:#6b7482; }
+  .mes-resumo span b { display:block; font-size:15px; }
+  .mes-body { padding:20px; display:none; }
+  .mes.aberto .mes-body { display:block; }
+  .mes-mini { display:grid; grid-template-columns:repeat(auto-fit,minmax(130px,1fr)); gap:10px; margin-bottom:20px; }
+  .mini { background:#f7f9fb; border-radius:10px; padding:12px; border:1px solid #eef1f5; }
+  .mini .label { font-size:11px; color:#6b7482; text-transform:uppercase; }
+  .mini .valor { font-size:18px; font-weight:600; margin-top:4px; }
+  .secao { margin-bottom:18px; }
+  .secao-title { display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; }
+  .secao-title h3 { font-size:14px; color:#141924; }
+  .btns button { width:30px; height:30px; border-radius:8px; border:none; cursor:pointer; font-size:18px; font-weight:700; margin-left:6px; color:#fff; }
+  .add { background:#159a5f; } .add:hover { background:#1cb972; }
+  table { width:100%; border-collapse:collapse; }
+  th { text-align:left; font-size:11px; color:#6b7482; text-transform:uppercase; padding:6px 8px; }
+  td { padding:4px 8px; border-top:1px solid #eef1f5; vertical-align:middle; }
+  input[type=text], input[type=number], select { background:#ffffff; border:1px solid #d4dae2; color:#1e2430; border-radius:6px; padding:7px 9px; font-size:13px; width:100%; }
+  input:focus, select:focus { outline:none; border-color:#2f6fd6; }
+  .col-valor input { text-align:right; }
+  .chk { width:20px; height:20px; cursor:pointer; accent-color:#159a5f; }
+  tr.pago-row { background:#eafaf1; }
+  tr.pago-row input[type=text], tr.pago-row input[type=number] { color:#0f7a49; }
+  .del { background:#e5c0c0; color:#a12b2b; border:none; border-radius:6px; width:28px; height:28px; cursor:pointer; font-size:14px; }
+  .del:hover { background:#d64545; color:#fff; }
+  .empty { color:#9aa3b0; font-size:13px; padding:8px; }
+  .footer-mes { display:flex; justify-content:flex-end; gap:24px; margin-top:14px; padding-top:14px; border-top:1px solid #eef1f5; font-size:14px; flex-wrap:wrap; color:#6b7482; }
+  .toolbar { margin-bottom:20px; display:flex; gap:10px; flex-wrap:wrap; }
+  .toolbar button { background:#ffffff; border:1px solid #d4dae2; color:#1e2430; padding:9px 14px; border-radius:8px; cursor:pointer; font-size:13px; }
+  .toolbar button:hover { border-color:#2f6fd6; }
+  .th-pago { width:44px; text-align:center; }
+</style>
+</head>
+<body>
+  <h1>Organizador Financeiro</h1>
+  <div class="sub">Controle de receitas e despesas — Agosto a Dezembro</div>
+  <div id="status" class="status sync">Conectando...</div>
+  <div class="painel" id="painelGeral"></div>
+  <div class="painel-cartoes" id="painelCartoes"></div>
+  <div class="toolbar">
+    <button onclick="expandirTodos(true)">Expandir todos</button>
+    <button onclick="expandirTodos(false)">Recolher todos</button>
+    <button onclick="recarregar()">Atualizar</button>
+  </div>
+  <div id="meses"></div>
+<script>
+// ==========================================================
+//  CONFIGURACAO DO SUPABASE - cole aqui suas 2 informacoes
+// ==========================================================
+const SUPABASE_URL  = 'https://jhxxycotfbczgutrqgll.supabase.co';
+const SUPABASE_KEY  = 'sb_publishable_WY2pypkIGU6xBOm21AXMbA_TdCtzxkZ';
+// ==========================================================
+
+const MESES = ['agosto','setembro','outubro','novembro','dezembro'];
+const CARTOES = ['Nubank','Evolua'];
+const TABELA = 'organizador_lancamentos';
+let sb = null;
+
+let dados = {};
+MESES.forEach(m => dados[m] = { receitas:[], despesas:[] });
+let timers = {};
+
+function setStatus(txt, cls){ const el = document.getElementById('status'); el.textContent = txt; el.className = 'status ' + cls; }
+function fmt(v){ return (Number(v)||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'}); }
+function num(v){ return parseFloat(v)||0; }
+
+async function carregar(){
+  setStatus('Carregando...', 'sync');
+  const { data, error } = await sb.from(TABELA).select('*').order('ordem',{ascending:true});
+  if(error){ setStatus('Erro ao carregar: '+error.message, 'erro'); return; }
+  MESES.forEach(m => dados[m] = { receitas:[], despesas:[] });
+  data.forEach(row => { if(!dados[row.mes]) return; if(row.categoria === 'receita') dados[row.mes].receitas.push(row); else dados[row.mes].despesas.push(row); });
+  setStatus('Sincronizado', 'ok'); render();
+}
+async function recarregar(){ await carregar(); }
+
+function totalReceitasMes(m){ return dados[m].receitas.reduce((s,r)=>s+num(r.valor),0); }
+function totalDespesasMes(m){ return dados[m].despesas.reduce((s,r)=>s+num(r.valor),0); }
+function totalCartaoNome(m,nome){ return dados[m].despesas.filter(d=>d.tipo==='cartao'&&d.cartao===nome).reduce((s,r)=>s+num(r.valor),0); }
+function totalBoletoMes(m){ return dados[m].despesas.filter(d=>d.tipo==='boleto').reduce((s,r)=>s+num(r.valor),0); }
+function totalFixaMes(m){ return dados[m].despesas.filter(d=>d.tipo==='fixa').reduce((s,r)=>s+num(r.valor),0); }
+// pagos = despesas marcadas como pago
+function totalPagoMes(m){ return dados[m].despesas.filter(d=>d.pago).reduce((s,r)=>s+num(r.valor),0); }
+function totalAbertoMes(m){ return dados[m].despesas.filter(d=>!d.pago).reduce((s,r)=>s+num(r.valor),0); }
+// recebidos = receitas marcadas como pago (recebido)
+function totalRecebidoMes(m){ return dados[m].receitas.filter(r=>r.pago).reduce((s,r)=>s+num(r.valor),0); }
+
+function render(){
+  let recTotal=0, despTotal=0, pagoTotal=0, recebidoTotal=0;
+  MESES.forEach(m => { recTotal+=totalReceitasMes(m); despTotal+=totalDespesasMes(m); pagoTotal+=totalPagoMes(m); recebidoTotal+=totalRecebidoMes(m); });
+  const saldo = recTotal - despTotal;
+  const abertoTotal = despTotal - pagoTotal;
+  document.getElementById('painelGeral').innerHTML = `
+    <div class="card"><div class="label">Receita ate dezembro</div><div class="valor verde">${fmt(recTotal)}</div></div>
+    <div class="card"><div class="label">Divida ate dezembro</div><div class="valor vermelho">${fmt(despTotal)}</div></div>
+    <div class="card"><div class="label">Ja pago (ano)</div><div class="valor roxo">${fmt(pagoTotal)}</div></div>
+    <div class="card"><div class="label">Falta pagar (ano)</div><div class="valor amarelo">${fmt(abertoTotal)}</div></div>
+    <div class="card"><div class="label">Saldo projetado</div><div class="valor ${saldo>=0?'verde':'vermelho'}">${fmt(saldo)}</div></div>`;
+  let nubank=0, evolua=0, boletos=0;
+  MESES.forEach(m => { nubank+=totalCartaoNome(m,'Nubank'); evolua+=totalCartaoNome(m,'Evolua'); boletos+=totalBoletoMes(m); });
+  document.getElementById('painelCartoes').innerHTML = `
+    <div class="card"><div class="label">Cartao Nubank (total)</div><div class="valor azul">${fmt(nubank)}</div></div>
+    <div class="card"><div class="label">Cartao Evolua (total)</div><div class="valor azul">${fmt(evolua)}</div></div>
+    <div class="card"><div class="label">Boletos (total)</div><div class="valor amarelo">${fmt(boletos)}</div></div>
+    <div class="card"><div class="label">Recebido (ano)</div><div class="valor verde">${fmt(recebidoTotal)}</div></div>`;
+  const abertos = [...document.querySelectorAll('.mes.aberto')].map(e=>e.dataset.mes);
+  document.getElementById('meses').innerHTML = MESES.map(m => renderMes(m, abertos.includes(m))).join('');
+}
+
+function renderMes(m, aberto){
+  const rec = totalReceitasMes(m), desp = totalDespesasMes(m), saldo = rec - desp;
+  const pago = totalPagoMes(m), aberto2 = totalAbertoMes(m), recebido = totalRecebidoMes(m);
+  const receitasRows = dados[m].receitas.length ? dados[m].receitas.map(r=>`
+    <tr class="${r.pago?'pago-row':''}">
+      <td class="th-pago"><input type="checkbox" class="chk" ${r.pago?'checked':''} onchange="edit('${r.id}','pago',this.checked)"></td>
+      <td><input type="text" value="${(r.descricao||'').replace(/"/g,'&quot;')}" oninput="edit('${r.id}','descricao',this.value)" placeholder="Descricao"></td>
+      <td class="col-valor" style="width:140px"><input type="number" value="${r.valor||''}" oninput="edit('${r.id}','valor',this.value)" placeholder="0,00" step="0.01"></td>
+      <td style="width:40px"><button class="del" onclick="remover('${r.id}','${m}')">&times;</button></td>
+    </tr>`).join('') : `<tr><td colspan="4" class="empty">Nenhuma receita.</td></tr>`;
+  const despesasRows = dados[m].despesas.length ? dados[m].despesas.map(d=>`
+    <tr class="${d.pago?'pago-row':''}">
+      <td class="th-pago"><input type="checkbox" class="chk" ${d.pago?'checked':''} onchange="edit('${d.id}','pago',this.checked)"></td>
+      <td><input type="text" value="${(d.descricao||'').replace(/"/g,'&quot;')}" oninput="edit('${d.id}','descricao',this.value)" placeholder="Descricao"></td>
+      <td style="width:120px">
+        <select onchange="edit('${d.id}','tipo',this.value)">
+          <option value="cartao" ${d.tipo==='cartao'?'selected':''}>Cartao</option>
+          <option value="boleto" ${d.tipo==='boleto'?'selected':''}>Boleto</option>
+          <option value="fixa" ${d.tipo==='fixa'?'selected':''}>Fixa</option>
+        </select>
+      </td>
+      <td style="width:110px">
+        ${d.tipo==='cartao' ? `<select onchange="edit('${d.id}','cartao',this.value)">
+          ${CARTOES.map(c=>`<option ${d.cartao===c?'selected':''}>${c}</option>`).join('')}
+        </select>` : '&mdash;'}
+      </td>
+      <td class="col-valor" style="width:140px"><input type="number" value="${d.valor||''}" oninput="edit('${d.id}','valor',this.value)" placeholder="0,00" step="0.01"></td>
+      <td style="width:40px"><button class="del" onclick="remover('${d.id}','${m}')">&times;</button></td>
+    </tr>`).join('') : `<tr><td colspan="6" class="empty">Nenhuma despesa.</td></tr>`;
+  return `
+  <div class="mes ${aberto?'aberto':''}" data-mes="${m}">
+    <div class="mes-header" onclick="toggleMes('${m}')">
+      <h2>${m}</h2>
+      <div class="mes-resumo">
+        <span>Receita <b class="verde">${fmt(rec)}</b></span>
+        <span>Despesa <b class="vermelho">${fmt(desp)}</b></span>
+        <span>Pago <b class="roxo">${fmt(pago)}</b></span>
+        <span>Saldo <b class="${saldo>=0?'verde':'vermelho'}">${fmt(saldo)}</b></span>
+      </div>
+    </div>
+    <div class="mes-body">
+      <div class="mes-mini">
+        <div class="mini"><div class="label">Cartao Nubank</div><div class="valor azul">${fmt(totalCartaoNome(m,'Nubank'))}</div></div>
+        <div class="mini"><div class="label">Cartao Evolua</div><div class="valor azul">${fmt(totalCartaoNome(m,'Evolua'))}</div></div>
+        <div class="mini"><div class="label">Boletos</div><div class="valor amarelo">${fmt(totalBoletoMes(m))}</div></div>
+        <div class="mini"><div class="label">Despesas fixas</div><div class="valor vermelho">${fmt(totalFixaMes(m))}</div></div>
+        <div class="mini"><div class="label">A receber</div><div class="valor verde">${fmt(rec)}</div></div>
+        <div class="mini"><div class="label">Recebido</div><div class="valor verde">${fmt(recebido)}</div></div>
+        <div class="mini"><div class="label">Pago</div><div class="valor roxo">${fmt(pago)}</div></div>
+        <div class="mini"><div class="label">Falta pagar</div><div class="valor amarelo">${fmt(aberto2)}</div></div>
+      </div>
+      <div class="secao">
+        <div class="secao-title"><h3>Receitas</h3><div class="btns"><button class="add" onclick="adicionar('${m}','receita')">+</button></div></div>
+        <table><thead><tr><th class="th-pago">Rec.</th><th>Descricao</th><th style="text-align:right">Valor</th><th></th></tr></thead><tbody>${receitasRows}</tbody></table>
+      </div>
+      <div class="secao">
+        <div class="secao-title"><h3>Despesas</h3><div class="btns"><button class="add" onclick="adicionar('${m}','despesa')">+</button></div></div>
+        <table><thead><tr><th class="th-pago">Pago</th><th>Descricao</th><th>Tipo</th><th>Cartao</th><th style="text-align:right">Valor</th><th></th></tr></thead><tbody>${despesasRows}</tbody></table>
+      </div>
+      <div class="footer-mes">
+        <span>Total receitas: <b class="verde">${fmt(rec)}</b></span>
+        <span>Total despesas: <b class="vermelho">${fmt(desp)}</b></span>
+        <span>Pago: <b class="roxo">${fmt(pago)}</b></span>
+        <span>Falta pagar: <b class="amarelo">${fmt(aberto2)}</b></span>
+        <span>Saldo: <b class="${saldo>=0?'verde':'vermelho'}">${fmt(saldo)}</b></span>
+      </div>
+    </div>
+  </div>`;
+}
+
+async function adicionar(mes, categoria){
+  setStatus('Salvando...', 'sync');
+  const novo = { mes, categoria, descricao:'', valor:0, tipo:'cartao', cartao:'Nubank', pago:false, ordem: Date.now() };
+  const { data, error } = await sb.from(TABELA).insert(novo).select().single();
+  if(error){ setStatus('Erro: '+error.message,'erro'); return; }
+  (categoria==='receita' ? dados[mes].receitas : dados[mes].despesas).push(data);
+  setStatus('Sincronizado','ok'); render(); reabrir(mes);
+}
+
+async function remover(id, mes){
+  setStatus('Removendo...', 'sync');
+  const { error } = await sb.from(TABELA).delete().eq('id', id);
+  if(error){ setStatus('Erro: '+error.message,'erro'); return; }
+  dados[mes].receitas = dados[mes].receitas.filter(r=>r.id!==id);
+  dados[mes].despesas = dados[mes].despesas.filter(r=>r.id!==id);
+  setStatus('Sincronizado','ok'); render(); reabrir(mes);
+}
+
+function edit(id, campo, valor){
+  let mesAlvo=null;
+  for(const m of MESES){
+    for(const lista of [dados[m].receitas, dados[m].despesas]){
+      const item = lista.find(x=>x.id===id);
+      if(item){ item[campo] = valor; mesAlvo=m; }
+    }
+  }
+  // pago, tipo e cartao mudam painel e cores -> re-render; valor so atualiza numeros
+  if(campo==='pago' || campo==='tipo' || campo==='cartao'){ render(); if(mesAlvo) reabrir(mesAlvo); }
+  else if(campo==='valor'){ atualizarResumos(); }
+
+  clearTimeout(timers[id+campo]);
+  setStatus('Salvando...', 'sync');
+  timers[id+campo] = setTimeout(async ()=>{
+    const patch = {};
+    patch[campo] = (campo==='valor') ? num(valor) : valor;
+    const { error } = await sb.from(TABELA).update(patch).eq('id', id);
+    setStatus(error ? 'Erro: '+error.message : 'Sincronizado', error?'erro':'ok');
+  }, 500);
+}
+
+function atualizarResumos(){
+  let recTotal=0, despTotal=0, pagoTotal=0, recebidoTotal=0, nubank=0, evolua=0, boletos=0;
+  MESES.forEach(m => { recTotal+=totalReceitasMes(m); despTotal+=totalDespesasMes(m); pagoTotal+=totalPagoMes(m); recebidoTotal+=totalRecebidoMes(m); nubank+=totalCartaoNome(m,'Nubank'); evolua+=totalCartaoNome(m,'Evolua'); boletos+=totalBoletoMes(m); });
+  const saldo=recTotal-despTotal; const abertoTotal=despTotal-pagoTotal;
+  document.getElementById('painelGeral').innerHTML = `
+    <div class="card"><div class="label">Receita ate dezembro</div><div class="valor verde">${fmt(recTotal)}</div></div>
+    <div class="card"><div class="label">Divida ate dezembro</div><div class="valor vermelho">${fmt(despTotal)}</div></div>
+    <div class="card"><div class="label">Ja pago (ano)</div><div class="valor roxo">${fmt(pagoTotal)}</div></div>
+    <div class="card"><div class="label">Falta pagar (ano)</div><div class="valor amarelo">${fmt(abertoTotal)}</div></div>
+    <div class="card"><div class="label">Saldo projetado</div><div class="valor ${saldo>=0?'verde':'vermelho'}">${fmt(saldo)}</div></div>`;
+  document.getElementById('painelCartoes').innerHTML = `
+    <div class="card"><div class="label">Cartao Nubank (total)</div><div class="valor azul">${fmt(nubank)}</div></div>
+    <div class="card"><div class="label">Cartao Evolua (total)</div><div class="valor azul">${fmt(evolua)}</div></div>
+    <div class="card"><div class="label">Boletos (total)</div><div class="valor amarelo">${fmt(boletos)}</div></div>
+    <div class="card"><div class="label">Recebido (ano)</div><div class="valor verde">${fmt(recebidoTotal)}</div></div>`;
+  MESES.forEach(m=>{
+    const el=document.querySelector(`.mes[data-mes="${m}"] .mes-resumo`);
+    if(el){ const rec=totalReceitasMes(m), desp=totalDespesasMes(m), s=rec-desp, pg=totalPagoMes(m);
+      el.innerHTML=`<span>Receita <b class="verde">${fmt(rec)}</b></span><span>Despesa <b class="vermelho">${fmt(desp)}</b></span><span>Pago <b class="roxo">${fmt(pg)}</b></span><span>Saldo <b class="${s>=0?'verde':'vermelho'}">${fmt(s)}</b></span>`; }
+  });
+}
+
+function toggleMes(m){ document.querySelector(`.mes[data-mes="${m}"]`).classList.toggle('aberto'); }
+function expandirTodos(abrir){ document.querySelectorAll('.mes').forEach(e => e.classList.toggle('aberto', abrir)); }
+function reabrir(m){ document.querySelector(`.mes[data-mes="${m}"]`)?.classList.add('aberto'); }
+
+if(SUPABASE_URL.startsWith('COLE_') || SUPABASE_KEY.startsWith('COLE_')){
+  setStatus('Configure SUPABASE_URL e SUPABASE_KEY no codigo (veja o topo do script)', 'erro');
+  render();
+} else {
+  try {
+    sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+    carregar();
+  } catch (e) {
+    setStatus('Erro ao conectar: ' + e.message, 'erro');
+    render();
+  }
+}
+</script>
+</body>
+</html>
