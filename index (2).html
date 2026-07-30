@@ -217,6 +217,35 @@ function somaBloco(itens){ return itens.reduce((s,r)=>s+num(r.valor),0); }
 function pagoBloco(itens){ return itens.filter(r=>r.pago).reduce((s,r)=>s+num(r.valor),0); }
 
 // --- vencimento ---
+// converte 'yyyy-mm-dd' (banco) para 'dd/mm/aaaa' (tela)
+function isoParaBR(iso){
+  if(!iso) return '';
+  const p = String(iso).slice(0,10).split('-');
+  if(p.length!==3) return '';
+  return p[2]+'/'+p[1]+'/'+p[0];
+}
+// converte 'dd/mm/aaaa' (tela) para 'yyyy-mm-dd' (banco); retorna null se incompleto/invalido
+function brParaISO(br){
+  if(!br) return null;
+  const m = br.match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if(!m) return null;
+  const dd=+m[1], mm=+m[2], aa=+m[3];
+  if(mm<1||mm>12||dd<1||dd>31) return null;
+  return m[3]+'-'+m[2]+'-'+m[1];
+}
+// formata enquanto digita: coloca as barras automaticamente
+function mascaraData(el, id){
+  let v = el.value.replace(/\D/g,'').slice(0,8);
+  let out = v;
+  if(v.length>=5) out = v.slice(0,2)+'/'+v.slice(2,4)+'/'+v.slice(4);
+  else if(v.length>=3) out = v.slice(0,2)+'/'+v.slice(2);
+  el.value = out;
+  // se completou dd/mm/aaaa valido, salva no banco
+  const iso = brParaISO(out);
+  if(iso){ edit(id,'vencimento',iso); }
+  else if(out===''){ edit(id,'vencimento',null); }
+}
+
 function hojeISO(){ const d=new Date(); d.setHours(0,0,0,0); return d; }
 function statusVenc(item){
   // retorna '', 'vencido' ou 'breve'
@@ -329,7 +358,7 @@ function renderMes(m, aberto){
       <tr class="${classeVenc(d)}">
         <td class="th-pago"><input type="checkbox" class="chk" ${d.pago?'checked':''} onchange="edit('${d.id}','pago',this.checked)"></td>
         <td><input type="text" value="${(d.descricao||'').replace(/"/g,'&quot;')}" oninput="edit('${d.id}','descricao',this.value)" placeholder="Descricao">${badgeVenc(d)}</td>
-        <td style="width:140px"><input type="date" value="${d.vencimento||''}" onchange="edit('${d.id}','vencimento',this.value)"></td>
+        <td style="width:130px"><input type="text" inputmode="numeric" maxlength="10" placeholder="dd/mm/aaaa" value="${isoParaBR(d.vencimento)}" oninput="mascaraData(this,'${d.id}')"></td>
         <td class="col-valor" style="width:140px"><input type="number" value="${d.valor||''}" oninput="edit('${d.id}','valor',this.value)" placeholder="0,00" step="0.01"></td>
         <td style="width:40px"><button class="del" onclick="remover('${d.id}','${m}')">&times;</button></td>
       </tr>`).join('') : `<tr><td colspan="5" class="empty">Nenhum lancamento.</td></tr>`;
@@ -451,7 +480,7 @@ function renderCartaoBloco(m, cartao){
         <tr class="${classeVenc(d)}">
           <td class="th-pago"><input type="checkbox" class="chk" ${d.pago?'checked':''} onchange="edit('${d.id}','pago',this.checked)"></td>
           <td><input type="text" value="${(d.descricao||'').replace(/"/g,'&quot;')}" oninput="edit('${d.id}','descricao',this.value)" placeholder="Descricao">${badgeVenc(d)}</td>
-          <td style="width:140px"><input type="date" value="${d.vencimento||''}" onchange="edit('${d.id}','vencimento',this.value)"></td>
+          <td style="width:130px"><input type="text" inputmode="numeric" maxlength="10" placeholder="dd/mm/aaaa" value="${isoParaBR(d.vencimento)}" oninput="mascaraData(this,'${d.id}')"></td>
           <td class="col-valor" style="width:140px"><input type="number" value="${d.valor||''}" oninput="edit('${d.id}','valor',this.value)" placeholder="0,00" step="0.01"></td>
           <td style="width:40px"><button class="del" onclick="remover('${d.id}','${m}')">&times;</button></td>
         </tr>`).join('') : `<tr><td colspan="5" class="empty">Nenhum lancamento (ou usando total digitado).</td></tr>`
@@ -543,7 +572,8 @@ function edit(id, campo, valor){
     }
   }
   // pago, tipo e cartao mudam painel e cores -> re-render; valor so atualiza numeros
-  if(campo==='pago' || campo==='tipo' || campo==='cartao' || campo==='vencimento'){ render(); if(mesAlvo) reabrir(mesAlvo); }
+  if(campo==='pago' || campo==='tipo' || campo==='cartao'){ render(); if(mesAlvo) reabrir(mesAlvo); }
+  else if(campo==='vencimento'){ atualizarResumos(); /* cor/badge atualiza no proximo render */ }
   else if(campo==='valor'){ atualizarResumos(); }
 
   clearTimeout(timers[id+campo]);
